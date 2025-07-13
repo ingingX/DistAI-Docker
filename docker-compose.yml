@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  coordinator:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - worker-bert
+      - worker-mobilenet
+      - worker-clip
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ai-inference-network
+    restart: unless-stopped
+
+  worker-bert:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      - MODEL=prajjwal1/bert-tiny
+      - WORKER_ID=w1-bert
+      - FAIL_RATE=0.2
+      - PORT=9001
+      - PYTHONUNBUFFERED=1
+    command: python w1-BERT.py
+    volumes:
+      - bert_cache:/root/.cache/huggingface
+    networks:
+      - ai-inference-network
+    restart: unless-stopped
+
+  worker-mobilenet:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile
+    ports:
+      - "9002:9002"
+    environment:
+      - WORKER_ID=w2-mobilenet
+      - FAIL_RATE=0.2
+      - PORT=9002
+      - PYTHONUNBUFFERED=1
+    command: python w2-MobileNet.py
+    volumes:
+      - mobilenet_cache:/root/.cache/torch
+    networks:
+      - ai-inference-network
+    restart: unless-stopped
+
+  worker-clip:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile
+    ports:
+      - "9003:9003"
+    environment:
+      - MODEL=openai/clip-vit-base-patch32
+      - WORKER_ID=w3-clip
+      - FAIL_RATE=0.1
+      - PORT=9003
+      - PYTHONUNBUFFERED=1
+    command: python w3-CLIP.py
+    volumes:
+      - clip_cache:/root/.cache/huggingface
+    networks:
+      - ai-inference-network
+    restart: unless-stopped
+
+  tester:
+    build:
+      context: .
+      dockerfile: tester/Dockerfile
+    depends_on:
+      - coordinator
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ai-inference-network
+    profiles:
+      - testing
+
+volumes:
+  bert_cache:
+  mobilenet_cache:
+  clip_cache:
+
+
+networks:
+  ai-inference-network:
+    driver: bridge
