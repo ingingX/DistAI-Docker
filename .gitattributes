@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
+
+# Auto-detect text files and ensure LF line endings
 * text=auto
+
+# Treat Python files as UTF-8
+*.py text eol=lf
+
+# Ensure shell scripts are LF and executable
+*.sh text eol=lf
+*.bash text eol=lf

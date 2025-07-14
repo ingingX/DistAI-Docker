@@ -1,76 +1,101 @@
-import asyncio
+"""
+Coordinator service for routing inference requests to appropriate workers.
+
+Routing logic:
+- If request contains only text: send to BERT worker
+- If request contains only image_base64: send to MobileNet worker
+- If request contains both: send to CLIP worker
+
+Performs periodic health checks to determine online/offline status of workers.
+Logs request metadata and provides a simple status API.
+"""
+
+import time
+import threading
 import random
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import httpx
-import uvicorn
+import requests
+from flask import Flask, request, jsonify 
+# Flask instead of FastAPI for simplicity, but no AsyncIO.
+# Migration to FastAPI would be straightforward if needed.
 
-app = FastAPI()
+# init Flask app and worker registry
+app = Flask(__name__)
 
-# Define worker URLs
-# These workers are expected to be running on localhost with different ports
-WORKERS = [
-    {"id": "w-BERT", "url": "http://localhost:9001"},
-    {"id": "w-MobileNet", "url": "http://localhost:9002"},
-    {"id": "w-CLIP", "url": "http://localhost:9003"}
-]
+# worker registry as dict to assign workers to different types of tasks
+workers = {
+    "bert": {"id": "worker1", "url": "http://worker1:9001", "status": "unknown"},
+    "mobilenet": {"id": "worker2", "url": "http://worker2:9002", "status": "unknown"},
+    "clip": {"id": "worker3", "url": "http://worker3:9003", "status": "unknown"},
+}
 
-worker_index = 0
-lock = asyncio.Lock()
+# init log
+log = []
 
-# Define the request base model for inference
-class InferenceRequest(BaseModel):
-    input: str
-
-# Call FastAPI to POST inquiry to workers
-@app.post("/infer")
-async def infer(request: InferenceRequest):
-    global worker_index
-    retries = 3 # maximum number of retries if a worker fails
-
-    for attempt in range(retries):
-        async with lock:
-            worker = WORKERS[worker_index % len(WORKERS)]
-            worker_index += 1
-
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(f"{worker['url']}/infer", json={"input": request.input})
-                response.raise_for_status()
-                result = response.json()
-                result["attempt"] = attempt + 1
-                return result
-        except Exception as e:
-            print(f"Worker {worker['id']} failed on attempt {attempt+1}: {e}")
-            continue
-
-    raise HTTPException(status_code=500, detail="All workers failed after retries.")
-
-# Get list of workers
-@app.get("/workers")
-async def get_workers():
-    return WORKERS
-
-# workders health check
-@app.get("/health")
-async def health_check():
-    results = []
-    async with httpx.AsyncClient(timeout=2.0) as client:
-        for worker in WORKERS:
+# define health check thread to check worker status
+def health_check():
+    while True:
+        for w in workers.values():
             try:
-                r = await client.get(f"{worker['url']}/health")
-                status = "online" if r.status_code == 200 else "unhealthy"
-            except Exception:
-                status = "offline"
-            results.append({
-                "id": worker["id"],
-                "url": worker["url"],
-                "status": status
-            })
-    return {
-        "coordinator": "online",
-        "workers": results
-    }
+                r = requests.get(w["url"] + "/status", timeout=1)
+                w["status"] = "online" if r.status_code == 200 else "offline"
+            except:
+                w["status"] = "offline"
+        time.sleep(5)
 
+# POST task requests to workers
+@app.route("/infer", methods=["POST"])
+def infer():
+    data = request.json or {}
+    has_text = "text" in data and isinstance(data["text"], str) and data["text"].strip() != ""
+    has_image = "image_base64" in data and isinstance(data["image_base64"], str) and data["image_base64"].strip() != ""
+
+    # diff task types to diff workers 
+    if has_text and not has_image:
+        key = "bert"
+    elif has_image and not has_text:
+        key = "mobilenet"
+    elif has_text and has_image:
+        key = "clip"
+    else:
+        return jsonify({"error": "Invalid input: must provide either text, image_base64, or both"}), 400
+
+    worker = workers[key]
+
+    # randon request ID
+    request_id = random.randint(1000, 9999)
+
+    # attempts counter
+    attempts = 0
+
+    # retry for worker calls
+    if worker["status"] != "online":
+        return jsonify({"error": f"Target worker ({worker['id']}) is offline"}), 503
+    try:
+        start = time.time()
+        r = requests.post(worker["url"] + "/infer", json=data, timeout=10)
+        latency = time.time() - start
+        log.append({
+            "request_id": request_id,
+            "worker_id": worker["id"],
+            "latency": latency,
+            "retries": attempts,
+            "type": key
+        })
+        return jsonify(r.json())
+    except Exception as e:
+        return jsonify({"error": f"Worker call failed: {str(e)}"}), 500
+
+# status check
+@app.route("/status")
+def status():
+    return jsonify({
+        "coordinator": "online",
+        "workers": workers,
+        "logs": log[-10:]
+    })
+
+# main
 if __name__ == "__main__":
-    uvicorn.run("coordinator:app", host="0.0.0.0", port=8000)
+    threading.Thread(target=health_check, daemon=True).start()
+    # Start Flask app on localhost:8000 for coordinator
+    app.run(host="0.0.0.0", port=8000) 

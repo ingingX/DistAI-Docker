@@ -1,57 +1,46 @@
-import random
-import asyncio
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import uvicorn
-import torch
-from transformers import CLIPTokenizer, CLIPModel
+"""
+CLIP Worker Service
 
-# Init model and environment variables
-MODEL_NAME = os.getenv("MODEL", "openai/clip-vit-base-patch32")
-WORKER_ID = os.getenv("WORKER_ID", "w3-clip")
-FAIL_RATE = float(os.getenv("FAIL_RATE", "0.1"))
-DELAY_RANGE = (0.1, 1.0)
+Exposes localhost 9003 port.
+input both text and image and returns similarity score from the CLIP.
 
-print(f"[{WORKER_ID}] Loading model {MODEL_NAME}...")
-tokenizer = CLIPTokenizer.from_pretrained(MODEL_NAME)
-model = CLIPModel.from_pretrained(MODEL_NAME)
-model.eval()
-print(f"[{WORKER_ID}] Model loaded.")
+Model used: openai/clip-vit-base-patch32
+"""
 
-app = FastAPI()
+from flask import Flask, request, jsonify
+from transformers import CLIPProcessor, CLIPModel
+from PIL import Image
+import torch, base64, io, random, time
 
-class InferenceRequest(BaseModel):
-    input: str
+# init flask
+app = Flask(__name__)
 
-@app.post("/infer")
-async def infer(request: InferenceRequest):
+# init model and processor
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
 
-    await asyncio.sleep(random.uniform(*DELAY_RANGE))
-
-
-    if random.random() < FAIL_RATE:
-        raise HTTPException(status_code=500, detail=f"{WORKER_ID} simulated failure")
-
-
-    inputs = tokenizer(request.input, return_tensors="pt", padding=True, truncation=True)
+# define '/infer' to handle POST requests
+@app.route("/infer", methods=["POST"])
+def infer():
+    # Download image and convert to base64
+    img_b64 = request.json.get("image_base64", "")
+    img_bytes = base64.b64decode(img_b64)
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    # preprocess input text
+    text = request.json.get("text", "a photo")
+    # create inputs for CLIP
+    inputs = processor(text=[text], images=img, return_tensors="pt", padding=True)
+    # run model
     with torch.no_grad():
-        outputs = model.get_text_features(**inputs)  
-        vector = outputs.squeeze().tolist() # Extract text vector as output
+        time.sleep(random.uniform(0, 2))
+        outputs = model(**inputs)
+    return jsonify({"logit_score": outputs.logits_per_image.item()})
 
-    return {
-        "worker_id": WORKER_ID,
-        "model": MODEL_NAME,
-        "input": request.input,
-        "text_vector": vector[:5]  # Return first 5 dimensions outpt for brevity
-    }
+# Health check
+@app.route("/status")
+def status():
+    return jsonify({"status": "online"})
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "worker_id": WORKER_ID}
-
+# main
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 9003))
-    uvicorn.run("w3-CLIP:app", host="0.0.0.0", port=port)
-
-# CLIP worker: 0.0.0.0:9003, input image and text for image classification and image-text similarity
+    app.run(host="0.0.0.0", port=9003)
