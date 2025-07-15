@@ -60,14 +60,35 @@ distributed_inference_system/
    ```bash
    curl http://localhost:8000/status
    ```
-## Test results and Simulated failure
+## Test and Simulated failure results
 
 1. **Smoke test results**
-   Run: ```bash docker-compose exec coordinator python /scripts/test_request.py --mode both --text "a cat" --image_url "https://picsum.photos/256"```
    
-3. **Batch test result**
+   - Run: `docker-compose exec coordinator python /scripts/test_request.py --mode both --text "a cat" --image_url "https://picsum.photos/256"`
+  
+   - Result:
+  
+     
+   
+2. **Batch test result**
+    
+   - Run: `docker-compose `
+  
+   - Result:
+  
+     
+   
 
-4. **Simulated failure result**
+3. **Simulated failure result**
+
+   
+   - Run: `docker-compose exec coordinator python /scripts/test_request.py --mode both --text "a cat" --image_url "https://picsum.photos/256"`
+  
+   - Result:
+  
+     
+   
+   
 
 ## Routing Logic
 
