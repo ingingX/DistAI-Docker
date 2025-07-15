@@ -34,7 +34,7 @@ distributed_inference_system/
    ```bash
    unzip DistAI-Docker.zip
    cd DistAI-Docker
-   docker-compose up --build -d
+   docker-compose up --build
    ```
 
 2. **Send test inference requests**:
