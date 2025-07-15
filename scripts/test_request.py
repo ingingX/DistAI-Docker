@@ -67,7 +67,7 @@ def main():
             payload['text'] = args.text
 
     print(f'Sending {args.mode} request to {args.api} ...')
-    # Send request to coordinator
+    # Send task to coordinator
     try:
         r = requests.post(args.api, json=payload, timeout=30)
         print('Status:', r.status_code)

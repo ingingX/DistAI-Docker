@@ -37,7 +37,7 @@ def fetch_image_b64(url: str) -> str:
         print(f"[ERROR] Failed to fetch image from {url}: {e}")
         return ""
 
-# Send request to coordinator
+# Send tasks to coordinator
 def send_request(payload: dict, index: int, task_type: str, max_retries: int = 3):
     attempt = 0
     while attempt < max_retries: 

@@ -22,7 +22,7 @@ model.eval()
 # define '/infer' to handle POST requests
 @app.route("/infer", methods=["POST"])
 def infer():
-    # Download image and convert to base64
+    # prep imag
     img_b64 = request.json.get("image_base64", "")
     img_bytes = base64.b64decode(img_b64)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
