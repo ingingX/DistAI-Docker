@@ -30,7 +30,7 @@ distributed_inference_system/
 
 ## Build & Run
 
-1. **Unzip and start services**:
+1. **Unzip and start coordinator and worker services**:
    ```bash
    unzip DistAI-Docker.zip
    cd DistAI-Docker
@@ -60,6 +60,14 @@ distributed_inference_system/
    ```bash
    curl http://localhost:8000/status
    ```
+## Test results and Simulated failure
+
+1. **Smoke test results**
+   Run: ```bash docker-compose exec coordinator python /scripts/test_request.py --mode both --text "a cat" --image_url "https://picsum.photos/256"```
+   
+3. **Batch test result**
+
+4. **Simulated failure result**
 
 ## Routing Logic
 
