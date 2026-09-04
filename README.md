@@ -1,404 +1,141 @@
 # DistAI-Docker: Distributed AI Inference System
 
-> A production-grade containerized microservices architecture for distributed ML model inference. Demonstrates core patterns in modern AI systems: intelligent request routing, fault tolerance, health monitoring, observability, and multi-environment deployment.
+> Production-grade containerized microservices for distributed ML inference. Demonstrates intelligent routing, fault tolerance, observability, and multi-environment deployment.
 
 ## 🚀 Quick Start
 
-### Option 1: Docker Compose (Development / Local Testing)
-
+### Docker Compose (Development)
 ```bash
 cd DistAI-Docker
 docker-compose up --build
 
-# In another terminal, send test requests
+# Test
 python scripts/test_request.py --api http://localhost:8000/infer \
   --mode text --text "This is a test"
 ```
 
-### Option 2: Kubernetes (Production / Cloud Deployment)
-
+### Kubernetes (Production)
 ```bash
-# Prerequisites: kubectl installed, K8s cluster available (minikube/EKS/GKE/AKS)
-
-# Deploy all services (one command)
+# Prerequisites: kubectl, K8s cluster (minikube/EKS/GKE/AKS)
 kubectl apply -f k8s/distai-all-in-one.yaml
-
-# Wait for pods to be ready
 kubectl get pods -n distai -w
-
-# Port forward for testing
 kubectl port-forward -n distai svc/coordinator 8000:8000
-
-# Send test requests
-curl -X POST http://localhost:8000/infer \
-  -H "Content-Type: application/json" \
-  -d '{"text": "hello world"}'
 ```
 
 ---
 
-## 📊 System Architecture
-
-### High-Level Overview
+## 📊 Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                 Coordinator Service                      │
-│         Central Request Router & Orchestrator             │
-│  • Intelligent routing (text→BERT, image→MobileNet, etc) │
-│  • 5-second health monitoring                            │
-│  • Exponential backoff retry (3 attempts, <3.5s)         │
-│  • Prometheus metrics & structured logging              │
-└─────────────────────────────────────────────────────────┘
-     │                    │                    │
-  ┌──▼──────┐        ┌──▼────────┐       ┌──▼────────┐
-  │  BERT   │        │ MobileNet  │       │   CLIP    │
-  │ Worker1 │        │ Worker2    │       │ Worker3   │
-  │(9001)   │        │(9002)      │       │(9003)     │
-  └─────────┘        └────────────┘       └───────────┘
+┌──────────────────────────────────────────┐
+│    Coordinator (Request Router)          │
+│  • Intelligent routing by modality       │
+│  • Health monitoring (5s)                │
+│  • Exponential backoff retry (3 times)   │
+│  • Prometheus metrics                    │
+└──────────────────────────────────────────┘
+     │              │              │
+  ┌──▼──┐      ┌──▼────┐      ┌──▼────┐
+  │BERT │      │Mobile │      │ CLIP  │
+  │ W1  │      │Net W2 │      │ W3    │
+  │9001 │      │ 9002  │      │ 9003  │
+  └─────┘      └───────┘      └───────┘
 ```
-
-### Request Routing
 
 | Input | Route | Model | Latency |
 |-------|-------|-------|---------|
-| Text only | → BERT Worker | prajjwal1/bert-tiny | ~100-200ms |
-| Image only | → MobileNet Worker | mobilenet_v3_small | ~80-150ms |
-| Text + Image | → CLIP Worker | clip-vit-base-patch32 | ~150-300ms |
+| Text | → BERT | prajjwal1/bert-tiny | ~100-200ms |
+| Image | → MobileNet | mobilenet_v3_small | ~80-150ms |
+| Both | → CLIP | clip-vit-base-patch32 | ~150-300ms |
 
 ---
 
-## 📋 Deployment Guide
+## 📖 Usage
 
-### Docker Compose (Single Machine)
+### Send Requests
 
-**Best for:** Local development, testing, demonstrations
-
+**Text (BERT):**
 ```bash
-# Start services
-docker-compose up --build
-
-# View logs
-docker-compose logs -f coordinator
-
-# Stop services
-docker-compose down
+python scripts/test_request.py --mode text --text "Your text here"
 ```
 
-**Features:**
-- ✓ Simple, one-file configuration
-- ✓ Fast startup (< 10 seconds)
-- ✗ Single machine only
-- ✗ No automatic failover
-- ✗ No auto-scaling
-
-### Kubernetes (Multi-Machine / Cloud)
-
-**Best for:** Production, high availability, auto-scaling
-
-#### 1. Local Testing (minikube)
-
+**Image (MobileNet):**
 ```bash
-# Install minikube (if not installed)
-brew install minikube  # macOS
-# or download from https://minikube.sigs.k8s.io/
-
-# Start minikube
-minikube start --cpus=4 --memory=8192
-
-# Build and load images into minikube
-docker build -t distai-coordinator:latest ./coordinator
-minikube image load distai-coordinator:latest
-
-# ... repeat for other images ...
-
-# Deploy
-kubectl apply -f k8s/distai-all-in-one.yaml
-
-# Test
-kubectl port-forward -n distai svc/coordinator 8000:8000
-curl -X POST http://localhost:8000/infer -H "Content-Type: application/json" -d '{"text": "test"}'
+python scripts/test_request.py --mode image --image_url "https://picsum.photos/256"
 ```
 
-#### 2. Cloud Deployment (AWS EKS / GCP GKE / Azure AKS)
-
-All three cloud platforms use the **same manifests**:
-
+**Both (CLIP):**
 ```bash
-# AWS EKS
-aws eks create-cluster --name distai
-aws eks update-kubeconfig --name distai
-kubectl apply -f k8s/distai-all-in-one.yaml
-
-# Google Cloud GKE
-gcloud container clusters create distai
-gcloud container clusters get-credentials distai
-kubectl apply -f k8s/distai-all-in-one.yaml
-
-# Azure AKS
-az aks create -n distai -g myResourceGroup
-az aks get-credentials -n distai -g myResourceGroup
-kubectl apply -f k8s/distai-all-in-one.yaml
+python scripts/test_request.py --mode both --text "a cat" --image_url "https://picsum.photos/256"
 ```
 
-**Kubernetes Features:**
-- ✓ Multi-node high availability
-- ✓ Automatic pod restart (< 1 second)
-- ✓ Node failure auto-recovery (< 30 seconds)
-- ✓ HPA auto-scaling (2-10 replicas based on CPU)
-- ✓ Zero-downtime rolling updates
-- ✓ Network policies & RBAC security
-- ✓ Prometheus monitoring & alerts
-
----
-
-## 📖 Usage Examples
-
-### 1. Send Inference Requests
-
-**Text-only (routes to BERT Worker):**
+### Run Tests
 ```bash
-python scripts/test_request.py --api http://localhost:8000/infer \
-  --mode text --text "This is a test sentence"
-```
-
-**Image-only (routes to MobileNet Worker):**
-```bash
-python scripts/test_request.py --api http://localhost:8000/infer \
-  --mode image --image_url "https://picsum.photos/256"
-```
-
-**Combined (routes to CLIP Worker):**
-```bash
-python scripts/test_request.py --api http://localhost:8000/infer \
-  --mode both --text "a cat" --image_url "https://picsum.photos/256"
-```
-
-### 2. Run Integration Tests
-
-**Docker Compose:**
-```bash
+# Batch test (21 requests)
 docker-compose exec coordinator python /scripts/test_batch.py
+
+# Unit tests
+pytest tests/test_coordinator.py -v
 ```
 
-**Kubernetes:**
-```bash
-kubectl exec -n distai deployment/coordinator -- python /scripts/test_batch.py
-```
-
-Sends 21 requests (7 text + 7 image + 7 combined) and measures latency.
-
-### 3. Monitor System Status
-
-**Docker Compose:**
+### Monitor Status
 ```bash
 curl http://localhost:8000/status | jq
 curl http://localhost:8000/metrics
-```
-
-**Kubernetes:**
-```bash
-kubectl get pods -n distai
-kubectl logs -n distai -l app=coordinator -f
-kubectl top pods -n distai  # Resource usage
-kubectl describe pod <pod-name> -n distai
-```
-
-### 4. Kubernetes-Specific Operations
-
-```bash
-# View HPA (auto-scaling) status
-kubectl get hpa -n distai
-
-# Scale manually
-kubectl scale deployment bert-worker --replicas=5 -n distai
-
-# Update to new image version
-kubectl set image deployment/coordinator \
-  coordinator=distai-coordinator:v2 -n distai
-
-# Rollback if needed
-kubectl rollout undo deployment/coordinator -n distai
-
-# View events
-kubectl get events -n distai --sort-by='.lastTimestamp'
 ```
 
 ---
 
 ## 🔧 API Endpoints
 
-### POST /infer
-Main inference endpoint. Routes request based on input modality.
+- `POST /infer` - Main inference endpoint
+  - Input: `{"text": "...", "image_base64": "..."}`
+  - Returns: Result + latency + request_id
+  - Errors: 400 (bad input), 503 (worker offline), 504 (retries exhausted)
 
-**Request body:**
-```json
-{
-  "text": "optional text input",
-  "image_base64": "optional base64 encoded image"
-}
-```
+- `GET /status` - System status and recent requests
 
-**Response (success - 200):**
-```json
-{
-  "result": {"embedding_sum": 123.45},
-  "worker_id": "worker1",
-  "latency_ms": 145.2,
-  "request_id": 123456,
-  "attempts": 1,
-  "timestamp": "2024-01-15T10:30:45.123456"
-}
-```
+- `GET /metrics` - Prometheus metrics
 
-**Error responses:**
-- `400`: Invalid input (no text or image provided)
-- `503`: Worker unavailable (offline or unhealthy)
-- `504`: All retry attempts exhausted
-
-### GET /status
-System status and recent request history.
-
-**Response:**
-```json
-{
-  "coordinator": "online",
-  "workers": {
-    "bert": {"id": "worker1", "status": "online", ...},
-    "mobilenet": {"id": "worker2", "status": "online", ...},
-    "clip": {"id": "worker3", "status": "online", ...}
-  },
-  "recent_requests": [...],
-  "stats": {
-    "total_requests": 42,
-    "successful_requests": 42,
-    "success_rate": 1.0,
-    "avg_latency_ms": 158.3
-  }
-}
-```
-
-### GET /metrics
-Prometheus metrics endpoint. For monitoring integration.
-
-### GET /health
-Simple health check for load balancers.
+- `GET /health` - Simple health check
 
 ---
 
-## 🛡️ Fault Tolerance & Reliability
+## ✨ Key Features
 
-### Retry Strategy
-
-Coordinator implements **exponential backoff** with max 3 retries:
-- Attempt 1: Immediate
-- Attempt 2: Wait 0.5s, retry
-- Attempt 3: Wait 1.0s, retry
-- Attempt 4: Wait 2.0s, fail with 504
-
-**Total maximum time:** < 3.5 seconds per request
-
-### Health Monitoring
-
-**Coordinator:** Checks each Worker every 5 seconds
-- Healthy (online) → Accept requests
-- Unhealthy (offline) → Return 503 immediately
-
-**Kubernetes:** Additional auto-recovery
-- Pod crashes → Automatic restart (< 1 second)
-- Node crashes → Auto-migrate Pod to other nodes (< 30 seconds)
-- Health checks: Readiness + Liveness + Startup probes
-
-### High Availability
-
-**Docker Compose:** ⚠️ Single point of failure
-- If host crashes → entire system down
-- Manual recovery required
-
-**Kubernetes:** ✅ Automatic failover
-- Pod anti-affinity → Replicas on different nodes
-- Multiple replicas → Continuous service
-- Auto-scaling → More replicas under load
+- ✅ **Intelligent Routing** - Modality-based worker selection
+- ✅ **Fault Tolerance** - Exponential backoff (3 retries, <3.5s max)
+- ✅ **Health Monitoring** - 5-second checks, auto-recovery
+- ✅ **Observability** - Prometheus metrics + structured logging
+- ✅ **Docker & K8s** - Works in both environments
+- ✅ **Auto-Scaling** - K8s HPA: 2-10 replicas based on CPU
+- ✅ **Zero-Downtime** - K8s rolling updates
+- ✅ **Security** - K8s NetworkPolicy + RBAC
+- ✅ **Testing** - 25+ unit tests, integration tests
 
 ---
 
-## 📊 Performance
+## 📊 Deployment Comparison
 
-### Baseline Metrics (Integration Tests)
-
-From running `test_batch.py` (21 sequential requests):
-
-| Metric | Value |
-|--------|-------|
-| Average Latency | ~160ms |
-| P99 Latency | <250ms |
-| Success Rate | 100% |
-| Throughput (single thread) | ~6 req/sec |
-
-### Scaling Potential
-
-| Scenario | Docker Compose | Kubernetes |
-|----------|---|---|
-| Normal load (10 req/s) | ✓ Works | ✓ Works |
-| High load (100 req/s) | ✗ Fails | ✓ Auto-scales to 8 replicas |
-| Node failure | ✗ System down | ✓ Auto-recovers (< 30s) |
-| Version update | ✗ Downtime | ✓ Zero-downtime rolling update |
-| New deployment | Manual | Automated |
-
----
-
-## 🧪 Testing
-
-### Unit Tests
-
-```bash
-# Install test dependencies
-pip install pytest pytest-cov
-
-# Run all tests
-pytest tests/test_coordinator.py -v
-
-# With coverage report
-pytest tests/test_coordinator.py --cov=coordinator --cov-report=html
-```
-
-**Test coverage:** 25+ tests, >80% code coverage
-
-Includes:
-- Input validation (all edge cases)
-- Routing logic (text/image/both)
-- Error handling (400/503/504)
-- Retry mechanism (exponential backoff)
-- Metrics collection (Prometheus)
-
-### Integration Tests
-
-**Docker Compose:**
-```bash
-docker-compose exec coordinator python /scripts/test_batch.py
-```
-
-**Kubernetes:**
-```bash
-kubectl exec -n distai deployment/coordinator -- python /scripts/test_batch.py
-```
-
-### Validation (No Dependencies)
-
-```bash
-# Verify routing logic and backoff calculation
-python validate_logic.py
-```
+| Feature | Docker Compose | Kubernetes |
+|---------|---|---|
+| Setup | < 5 min | 15-30 min |
+| Scaling | ✗ Manual | ✓ Auto (HPA) |
+| Auto-restart | ⚠️ Limited | ✓ Full |
+| Node failure | ✗ Down | ✓ Auto-migrate (< 30s) |
+| Zero-downtime updates | ✗ No | ✓ Yes |
+| Network isolation | ✗ No | ✓ Yes |
+| Production ready | ⚠️ Partial | ✓ Yes |
 
 ---
 
 ## 📚 Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Detailed system design, trade-offs, and decisions
-- **[K8S_MIGRATION.md](K8S_MIGRATION.md)** - Complete Kubernetes migration guide with examples
-- **[K8S_QUICKSTART.md](K8S_QUICKSTART.md)** - kubectl cheatsheet and quick reference
-- **[COMPOSE_VS_K8S.md](COMPOSE_VS_K8S.md)** - Docker Compose vs Kubernetes comparison
-- **[IMPROVEMENTS.md](IMPROVEMENTS.md)** - Project improvements summary
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design, trade-offs, decisions
+- **[K8S_MIGRATION.md](K8S_MIGRATION.md)** - Kubernetes deployment guide
+- **[K8S_QUICKSTART.md](K8S_QUICKSTART.md)** - kubectl cheatsheet
+- **[COMPOSE_VS_K8S.md](COMPOSE_VS_K8S.md)** - Technology comparison
+- **[IMPROVEMENTS.md](IMPROVEMENTS.md)** - Project improvements
 
 ---
 
@@ -406,136 +143,73 @@ python validate_logic.py
 
 ```
 DistAI-Docker/
-├── coordinator/
-│   ├── coordinator.py          # Main coordinator service
-│   ├── Dockerfile              # Container image
-│   └── requirements.txt         # Python dependencies
-├── workers/
-│   ├── w1-BERT.py              # BERT text encoder
-│   ├── w2-MobileNet.py         # MobileNet image classifier
-│   ├── w3-CLIP.py              # CLIP vision-language model
-│   ├── Dockerfile              # Shared worker image
-│   └── requirements.txt         # Python dependencies
-├── k8s/
-│   └── distai-all-in-one.yaml  # Complete K8s deployment (19 resources)
-├── scripts/
-│   ├── test_request.py         # Single request test
-│   └── test_batch.py           # Batch test (21 requests)
-├── tests/
-│   ├── test_coordinator.py     # Unit tests (25+)
-│   ├── conftest.py             # Pytest configuration
-│   └── requirements.txt         # Test dependencies
-├── docker-compose.yml          # Local development setup
-├── README.md                   # This file
-├── ARCHITECTURE.md             # System design details
-├── K8S_MIGRATION.md            # K8s deployment guide
-├── K8S_QUICKSTART.md           # kubectl quick reference
-├── COMPOSE_VS_K8S.md           # Technology comparison
-└── IMPROVEMENTS.md             # Improvements summary
+├── coordinator/          # Central routing service
+├── workers/              # BERT, MobileNet, CLIP workers
+├── k8s/                  # Kubernetes manifests (19 resources)
+├── scripts/              # Test scripts
+├── tests/                # Unit tests (25+)
+├── docker-compose.yml    # Development setup
+└── README.md             # This file
 ```
 
 ---
 
-## 🎯 Key Design Decisions
+## 🎯 Design Highlights
 
-### Why Exponential Backoff?
+**Exponential Backoff:** Retries with 0.5s → 1.0s → 2.0s waits to prevent thundering herd
 
-Instead of immediate retries, we use exponential backoff to:
-- Prevent thundering herd (all clients retrying simultaneously)
-- Give transient failures time to recover
-- Limit total retry time (< 3.5 seconds)
+**Three Workers:** Specialized for different modalities (text, image, multimodal) for optimized performance
 
-### Why Three Specialized Workers?
+**Both Deployments:** Understand trade-offs between simplicity (Docker) and capability (Kubernetes)
 
-Rather than one generic worker:
-- **BERT:** Optimized for text processing
-- **MobileNet:** Lightweight image classification
-- **CLIP:** Efficient multimodal reasoning
-
-Each model is deployed independently, allowing:
-- Focused resource optimization
-- Independent scaling
-- Fault isolation
-
-### Why Both Docker Compose and Kubernetes?
-
-- **Docker Compose:** Quick iteration and local testing
-- **Kubernetes:** Production-grade reliability and scalability
-
-This project demonstrates both approaches, helping you understand:
-- When each technology is appropriate
-- Trade-offs between simplicity and capability
-- How to migrate from development to production
+**Complete K8s Manifests:** Production-ready with 19 resources, health checks, auto-scaling, network policies
 
 ---
 
-## 🚀 Deployment Comparison
+## ⚡ Performance
 
-| Feature | Docker Compose | Kubernetes |
-|---------|---|---|
-| **Setup time** | < 5 min | 15-30 min |
-| **Learning curve** | Easy | Steep |
-| **Scalability** | Single machine | Multi-cloud |
-| **Auto-scaling** | ✗ No | ✓ Yes |
-| **Auto-restart** | ⚠️ Limited | ✓ Full |
-| **Zero-downtime updates** | ✗ No | ✓ Yes |
-| **Network isolation** | ✗ No | ✓ Yes (NetworkPolicy) |
-| **Cost efficiency** | Fixed | Dynamic (pay per use) |
-| **Production ready** | ⚠️ Partial | ✓ Yes |
+**Baseline (21 sequential requests):**
+- Average latency: ~160ms
+- P99 latency: <250ms
+- Success rate: 100%
+- Throughput: ~6 req/sec (single-threaded)
 
-**Recommendation:** Start with Docker Compose for development, graduate to Kubernetes for production.
+**Scaling potential:**
+- Docker Compose: Fixed resources
+- Kubernetes: Auto-scales 2-10 replicas under load
 
 ---
 
-## 📈 Next Steps
+## 🧪 Testing
 
-### For Learning
-- [ ] Run `docker-compose up` to understand the architecture
-- [ ] Send requests and observe routing behavior
-- [ ] Review [ARCHITECTURE.md](ARCHITECTURE.md) to understand design decisions
-- [ ] Read [COMPOSE_VS_K8S.md](COMPOSE_VS_K8S.md) to understand trade-offs
+```bash
+# Unit tests (25+)
+pytest tests/test_coordinator.py -v
 
-### For Production Deployment
-- [ ] Set up a K8s cluster (minikube/EKS/GKE/AKS)
-- [ ] Build and push Docker images to a registry
-- [ ] Deploy using `kubectl apply -f k8s/distai-all-in-one.yaml`
-- [ ] Monitor with Prometheus + Grafana (see [ARCHITECTURE.md](ARCHITECTURE.md))
+# Integration test
+docker-compose exec coordinator python /scripts/test_batch.py
 
-### For Interview Preparation
-- [ ] Deploy both Docker Compose and K8s versions
-- [ ] Take screenshots of running systems
-- [ ] Prepare talking points on design decisions
-- [ ] Practice explaining fault tolerance and scaling
+# Validation (no deps)
+python validate_logic.py
+```
+
+Test coverage: >80% (routing, validation, error handling, metrics)
 
 ---
 
-## 📞 Key Features Summary
+## 🚀 Next Steps
 
-✅ **Intelligent Routing** - Requests routed based on input modality (text→BERT, image→MobileNet, both→CLIP)
-
-✅ **Fault Tolerance** - Exponential backoff retry (3 attempts, <3.5s max)
-
-✅ **Health Monitoring** - 5-second intervals, automatic status updates
-
-✅ **Observability** - Prometheus metrics, structured logging, Request ID tracing
-
-✅ **Containerization** - Docker Compose for development, Kubernetes for production
-
-✅ **Auto-Scaling** - Kubernetes HPA: 2-10 replicas based on CPU/memory
-
-✅ **Zero-Downtime** - Kubernetes RollingUpdate with health checks
-
-✅ **Network Security** - Kubernetes NetworkPolicy for access control
-
-✅ **Testing** - 25+ unit tests, integration tests, validation scripts
-
-✅ **Documentation** - 2,600+ lines of guides and architecture documentation
+1. **Run Docker Compose** - `docker-compose up --build`
+2. **Send requests** - Test the inference endpoints
+3. **Review architecture** - Read [ARCHITECTURE.md](ARCHITECTURE.md)
+4. **Deploy to K8s** - `kubectl apply -f k8s/distai-all-in-one.yaml`
+5. **Understand trade-offs** - Read [COMPOSE_VS_K8S.md](COMPOSE_VS_K8S.md)
 
 ---
 
 ## 📝 License
 
-This project is provided as-is for educational and demonstration purposes.
+Educational and demonstration purposes.
 
 ---
 
@@ -543,5 +217,4 @@ This project is provided as-is for educational and demonstration purposes.
 
 - [Distributed Systems Patterns](https://martinfowler.com/articles/patterns-of-distributed-systems/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
-- [Docker Compose Documentation](https://docs.docker.com/compose/)
 - [ML Systems Design](https://stanford-cs329s.github.io/)
