@@ -1,0 +1,602 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: distai
+  labels:
+    name: distai
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: distai-app
+  namespace: distai
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: distai-role
+  namespace: distai
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: distai-rolebinding
+  namespace: distai
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: distai-role
+subjects:
+- kind: ServiceAccount
+  name: distai-app
+  namespace: distai
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: distai-config
+  namespace: distai
+data:
+  MAX_RETRIES: "3"
+  RETRY_BACKOFF: "0.5"
+  HEALTH_CHECK_INTERVAL: "5"
+  REQUEST_TIMEOUT: "10"
+  LOG_LEVEL: "INFO"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: distai
+  labels:
+    app: coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: coordinator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: distai-app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - coordinator
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: coordinator
+        image: distai-coordinator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        envFrom:
+        - configMapRef:
+            name: distai-config
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 2
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          failureThreshold: 30
+          periodSeconds: 1
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bert-worker
+  namespace: distai
+  labels:
+    app: bert-worker
+    worker-type: bert
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bert-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: bert-worker
+        worker-type: bert
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9001"
+    spec:
+      serviceAccountName: distai-app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: worker-type
+                  operator: In
+                  values:
+                  - bert
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: model-loader
+        image: distai-bert-worker:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - echo "Initializing BERT worker..." && sleep 2
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+      containers:
+      - name: bert-worker
+        image: distai-bert-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9001
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        env:
+        - name: WORKER_ID
+          value: bert-worker
+        - name: WORKER_PORT
+          value: "9001"
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 9001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /status
+            port: 9001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mobilenet-worker
+  namespace: distai
+  labels:
+    app: mobilenet-worker
+    worker-type: mobilenet
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mobilenet-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: mobilenet-worker
+        worker-type: mobilenet
+    spec:
+      serviceAccountName: distai-app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: worker-type
+                  operator: In
+                  values:
+                  - mobilenet
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: mobilenet-worker
+        image: distai-mobilenet-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9002
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        env:
+        - name: WORKER_ID
+          value: mobilenet-worker
+        - name: WORKER_PORT
+          value: "9002"
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 9002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /status
+            port: 9002
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/torchvision
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 1Gi
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clip-worker
+  namespace: distai
+  labels:
+    app: clip-worker
+    worker-type: clip
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: clip-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: clip-worker
+        worker-type: clip
+    spec:
+      serviceAccountName: distai-app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: worker-type
+                  operator: In
+                  values:
+                  - clip
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: clip-worker
+        image: distai-clip-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9003
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        env:
+        - name: WORKER_ID
+          value: clip-worker
+        - name: WORKER_PORT
+          value: "9003"
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 9003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /status
+            port: 9003
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+  namespace: distai
+  labels:
+    app: coordinator
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: coordinator
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bert-worker
+  namespace: distai
+  labels:
+    app: bert-worker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+  selector:
+    app: bert-worker
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mobilenet-worker
+  namespace: distai
+  labels:
+    app: mobilenet-worker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 9002
+    targetPort: 9002
+    protocol: TCP
+  selector:
+    app: mobilenet-worker
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clip-worker
+  namespace: distai
+  labels:
+    app: clip-worker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 9003
+    targetPort: 9003
+    protocol: TCP
+  selector:
+    app: clip-worker
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bert-worker-hpa
+  namespace: distai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bert-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mobilenet-worker-hpa
+  namespace: distai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mobilenet-worker
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: clip-worker-hpa
+  namespace: distai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: clip-worker
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: distai
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-coordinator-from-ingress
+  namespace: distai
+spec:
+  podSelector:
+    matchLabels:
+      app: coordinator
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-coordinator-to-workers
+  namespace: distai
+spec:
+  podSelector:
+    matchLabels:
+      worker-type: bert
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: coordinator
+    ports:
+    - protocol: TCP
+      port: 9001
