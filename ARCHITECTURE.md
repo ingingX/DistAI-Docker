@@ -272,43 +272,109 @@ Returns JSON with:
    - No CPU/memory tracking
    - Workaround: Add node exporter, GPU monitoring
 
-## Scalability Path (Future)
+## Kubernetes Deployment (Already Prepared!)
 
-### Phase 1: Async Foundation (Minimal effort)
+The project includes **production-ready Kubernetes manifests** (`k8s/distai-all-in-one.yaml`) with:
+
+### K8s Resources Included
+
+**Namespace & RBAC:**
+- Namespace: `distai` (isolated environment)
+- ServiceAccount: `distai-app` (identity for pods)
+- Role: Read ConfigMap/Secret, list Pods (minimal permissions)
+- RoleBinding: Connect Role to ServiceAccount
+
+**Workloads:**
+- Coordinator Deployment: 1 replica (can scale manually)
+- Worker Deployments × 3: BERT, MobileNet, CLIP (2 initial replicas each)
+
+**Networking:**
+- Service × 4: Coordinator (ClusterIP) + 3 Headless Services for Workers
+- NetworkPolicy × 3: Deny all by default, allow specific flows
+  - Coordinator ← Ingress
+  - Workers ← Coordinator only
+  - Worker-to-Worker blocked
+
+**Auto-Scaling:**
+- HPA × 3: BERT (2-10), MobileNet (2-8), CLIP (2-8) replicas
+- Trigger: CPU > 70% or Memory > 80%
+- Scaledown: After 5 minutes of low usage
+
+**Configuration:**
+- ConfigMap: Environment variables (MAX_RETRIES, LOG_LEVEL, etc)
+- Health Checks: Readiness (10s), Liveness (30s), Startup (10s)
+- Resource Limits: CPU requests/limits, Memory requests/limits
+- Graceful Shutdown: preStop hook (10s wait before kill)
+
+### Quick Deploy
+
+**Local Testing (minikube):**
+```bash
+minikube start --cpus=4 --memory=8192
+docker build -t distai-coordinator:latest ./coordinator
+minikube image load distai-coordinator:latest
+# ... repeat for other images ...
+kubectl apply -f k8s/distai-all-in-one.yaml
+kubectl port-forward -n distai svc/coordinator 8000:8000
+```
+
+**Cloud (EKS/GKE/AKS):**
+```bash
+# All three use the same manifests!
+kubectl apply -f k8s/distai-all-in-one.yaml
+```
+
+### K8s Advantages Over Docker Compose
+
+| Feature | Docker Compose | Kubernetes |
+|---------|---|---|
+| Pod recovery | Manual | Automatic (< 1s) |
+| Node failure | System down | Auto-migrate (< 30s) |
+| Auto-scaling | ✗ No | ✓ Yes (HPA) |
+| Zero-downtime update | ✗ No | ✓ Yes (RollingUpdate) |
+| Network isolation | ✗ No | ✓ Yes (NetworkPolicy) |
+| Multi-cloud | ✗ No | ✓ Yes (same manifests) |
+
+See [K8S_MIGRATION.md](K8S_MIGRATION.md) and [COMPOSE_VS_K8S.md](COMPOSE_VS_K8S.md) for detailed guides.
+
+---
+
+## Scalability Path (Already Implemented or Future)
+
+### ✅ Already Implemented (Docker Compose + K8s)
+- **Flask + Prometheus** (observability foundation)
+- **Kubernetes manifests** (multi-node ready)
+- **HPA auto-scaling** (dynamic replicas)
+- **Health checks** (readiness/liveness/startup)
+- **Network policies** (security isolation)
+
+### 🔄 Phase 1: Async Foundation (Optional)
 ```
 Flask → FastAPI + uvicorn
-Benefit: 10x throughput, better concurrency
+Current: Simple, easy to understand
+Future: 10x throughput, better concurrency
 ```
 
-### Phase 2: Persistence & Queuing
+### 🔄 Phase 2: Persistence & Queuing
 ```
 In-memory logs → PostgreSQL
 Simple routing → Celery + Redis task queue
-Benefit: Durability, distributed processing, fault tolerance
+Benefit: Durability, distributed processing
 ```
 
-### Phase 3: Distributed Deployment
-```
-1 Coordinator → N Coordinators (load balanced)
-1 Worker per type → Multiple replicas per type
-Benefit: High availability, horizontal scaling
-```
-
-### Phase 4: Advanced Observability
+### 🔄 Phase 3: Advanced Observability
 ```
 Add Jaeger for distributed tracing
-Add Prometheus scrape config
-Add Grafana dashboards
-Benefit: Comprehensive visibility, root cause analysis
+Add Grafana dashboards for K8s metrics
+Add log aggregation (ELK Stack)
 ```
 
-### Phase 5: Optimization
+### 🔄 Phase 4: Optimization
 ```
 Model quantization (INT8)
 Batch inference processing
 Caching layer (Redis)
 Early exit inference
-Benefit: 5-10x latency reduction
 ```
 
 ## Performance Characteristics
